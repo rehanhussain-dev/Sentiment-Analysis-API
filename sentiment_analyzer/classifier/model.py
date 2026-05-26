@@ -25,27 +25,39 @@ class Model:
         self.classifier = classifier.to(self.device)
 
     def predict(self, text):
-        encoded_text = self.tokenizer.encode_plus(
+        # Using explicit .encode() to completely isolate and avoid 'encode_plus' routing
+        input_ids_list = self.tokenizer.encode(
             text,
             max_length=config["MAX_SEQUENCE_LEN"],
             add_special_tokens=True,
-            return_token_type_ids=False,
-            pad_to_max_length=True,
-            return_attention_mask=True,
-            return_tensors="pt",
+            padding="max_length",
+            truncation=True
         )
-        input_ids = encoded_text["input_ids"].to(self.device)
-        attention_mask = encoded_text["attention_mask"].to(self.device)
+        
+        # Manually construct the attention mask (1 for real tokens, 0 for padded 0s)
+        pad_token_id = self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else 0
+        attention_mask_list = [1 if tid != pad_token_id else 0 for tid in input_ids_list]
+
+        # Convert directly to PyTorch Tensors and send to your device
+        input_ids = torch.tensor([input_ids_list]).to(self.device)
+        attention_mask = torch.tensor([attention_mask_list]).to(self.device)
 
         with torch.no_grad():
-            probabilities = F.softmax(self.classifier(input_ids, attention_mask), dim=1)
+            # Get the raw model predictions
+            outputs = self.classifier(input_ids, attention_mask)
+            probabilities = F.softmax(outputs, dim=1)
+        
         confidence, predicted_class = torch.max(probabilities, dim=1)
+        
+        # Extract native types safely
+        confidence_val = confidence.cpu().item() 
         predicted_class = predicted_class.cpu().item()
-        probabilities = probabilities.flatten().cpu().numpy().tolist()
+        probabilities_list = probabilities.flatten().cpu().numpy().tolist()
+        
         return (
             config["CLASS_NAMES"][predicted_class],
-            confidence,
-            dict(zip(config["CLASS_NAMES"], probabilities)),
+            confidence_val,
+            dict(zip(config["CLASS_NAMES"], probabilities_list)),
         )
 
 
